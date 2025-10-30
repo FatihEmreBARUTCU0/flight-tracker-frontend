@@ -1,11 +1,13 @@
-// src/ws.ts
+// Basit WS istemcisi (isteğe göre geliştirilebilir)
 const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:3000/ws";
 
-const ws = new WebSocket(WS_URL);
+// HMR sırasında çoğul bağlantıyı önlemek için global singleton
+const g = globalThis as unknown as { __APP_WS__?: WebSocket };
 
-// basit loglar (istemiyorsan silebilirsin)
-ws.onopen = () => console.log("[ws] connected:", WS_URL);
-ws.onclose = () => console.log("[ws] disconnected");
-ws.onerror = (e) => console.error("[ws] error:", e);
+if (!g.__APP_WS__ || g.__APP_WS__.readyState === WebSocket.CLOSED) {
+  g.__APP_WS__ = new WebSocket(WS_URL);
+  g.__APP_WS__.addEventListener("open", () => console.log("[ws] connected:", WS_URL));
+  g.__APP_WS__.addEventListener("close", () => console.log("[ws] closed"));
+}
 
-export default ws;
+export default g.__APP_WS__!;
