@@ -1,9 +1,10 @@
-// src/components/MapView.tsx
+// frontend/src/components/MapView.tsx
 import { useEffect, useState, useRef, useCallback, Fragment } from "react";
 import { MapContainer, TileLayer, Polyline, CircleMarker, Marker, Popup } from "react-leaflet";
 import L, { type LatLngExpression } from "leaflet";
 import ws from "../ws";
 import "leaflet/dist/leaflet.css";
+import { toLL, bearing } from "../lib/geo";
 
 type Flight = {
   _id: string;
@@ -15,25 +16,10 @@ type Flight = {
   departureTime: string;
 };
 
-type Props = {
-  mode: "live" | "replay";
-  at: number; // ms
-  onRangeChange?: (r: { min: number; max: number }) => void; // <-- yeni
-};
+type Props = { mode: "live" | "replay"; at: number; onRangeChange?: (r: { min: number; max: number } | null) => void; };
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
-const CENTER: LatLngExpression = [41.0082, 28.9784];
-
-const toLL = (lat: number, lng: number) => [lat, lng] as LatLngExpression;
-
-function bearing(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const toDeg = (r: number) => (r * 180) / Math.PI;
-  const φ1 = toRad(a.lat), φ2 = toRad(b.lat), λ1 = toRad(a.lng), λ2 = toRad(b.lng);
-  const y = Math.sin(λ2 - λ1) * Math.cos(φ2);
-  const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(λ2 - λ1);
-  return (toDeg(Math.atan2(y, x)) + 360) % 360;
-}
+const CENTER: LatLngExpression = toLL(41.0082, 28.9784);
 
 export default function MapView({ mode, at, onRangeChange }: Props) {
   const [flights, setFlights] = useState<Flight[]>([]);
@@ -74,11 +60,9 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
     return () => { cancelled = true; };
   }, []);
 
-  // 1.5) Replay penceresini hesapla ve dışarı bildir
   useEffect(() => {
     if (mode !== "replay" || flights.length === 0) {
-      // aralığı temizle (App tarafında fallback 6 saat çalışır)
-      onRangeChange?.(undefined as any);
+      onRangeChange?.(null);
       return;
     }
     const ctrl = new AbortController();
@@ -160,6 +144,7 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
     const debounceMs = 150;
     const ctrl = new AbortController();
     const iso = new Date(at).toISOString();
+    const MAX_GAP_MS = 120_000; // 2 dk: bu süreden uzun aralarda interpolasyon yapma
     const atMs = at;
 
     function lerp(a: number, b: number, t: number) { return a + (b - a) * t; }
@@ -181,11 +166,21 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
         const list = await r2.json().catch(() => undefined);
         const next = Array.isArray(list) ? list[0] : undefined;
 
-        // iki uç da varsa: lineer interpolasyon ve yön = prev→next
+        // iki uç da varsa
         if (prev && next && prev.ts && next.ts) {
           const t0 = new Date(prev.ts).getTime();
           const t1 = new Date(next.ts).getTime();
-          const span = Math.max(1, t1 - t0);
+          const gap = t1 - t0;
+          // GAP büyükse: interpolasyon yapma, prev'de bekle
+          if (gap > MAX_GAP_MS) {
+            const angHold = bearing(
+              { lat: f.departure_lat, lng: f.departure_long },
+              { lat: prev.lat, lng: prev.lng }
+            );
+            return { lat: prev.lat, lng: prev.lng, ang: angHold };
+          }
+          // GAP küçükse: lineer interpolasyon
+          const span = Math.max(1, gap);
           const t = Math.min(1, Math.max(0, (atMs - t0) / span));
           const lat = lerp(prev.lat, next.lat, t);
           const lng = lerp(prev.lng, next.lng, t);
@@ -193,7 +188,7 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
           return { lat, lng, ang };
         }
 
-        // tek taraf varsa onu kullan; yönü rotanın genel doğrultusundan türet
+        // yalnızca PREV varsa: prev'de bekle
         if (prev && typeof prev.lat === "number" && typeof prev.lng === "number") {
           const ang = bearing(
             { lat: f.departure_lat, lng: f.departure_long },
@@ -201,12 +196,13 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
           );
           return { lat: prev.lat, lng: prev.lng, ang };
         }
+        // yalnızca NEXT varsa: kalkış noktasında bekle (uçağı erken göstermeyelim)
         if (next && typeof next.lat === "number" && typeof next.lng === "number") {
           const ang = bearing(
             { lat: f.departure_lat, lng: f.departure_long },
             { lat: next.lat, lng: next.lng }
           );
-          return { lat: next.lat, lng: next.lng, ang };
+          return { lat: f.departure_lat, lng: f.departure_long, ang };
         }
       } catch (e: any) {
         if (e?.name !== "AbortError") console.error("[/telemetry pointAt] error", e);

@@ -1,9 +1,8 @@
-// src/components/AnimatedFlight.tsx
+// frontend/src/components/AnimatedFlight.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Marker, Polyline, Popup, CircleMarker } from "react-leaflet";
 import L from "leaflet";
-import type { LatLngExpression } from "leaflet";
-
+import { toLL, lerp, bearing } from "../lib/geo";
 
 export type Flight = {
   _id: string;
@@ -22,12 +21,7 @@ type Props = {
   loop?: boolean;      // bittiğinde başa dönsün mü
 };
 
-const toLatLng = (lat: number, lng: number) => [lat, lng] as LatLngExpression;
-
 // iki nokta arasında basit doğrusal interpolasyon
-function lerp(a: number, b: number, t: number) {
-  return a + (b - a) * t;
-}
 function interpolate(
   a: { lat: number; lng: number },
   b: { lat: number; lng: number },
@@ -37,22 +31,6 @@ function interpolate(
     lat: lerp(a.lat, b.lat, t),
     lng: lerp(a.lng, b.lng, t),
   };
-}
-
-// yön/bearing (derece)
-function bearing(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const toDeg = (r: number) => (r * 180) / Math.PI;
-
-  const φ1 = toRad(a.lat);
-  const φ2 = toRad(b.lat);
-  const λ1 = toRad(a.lng);
-  const λ2 = toRad(b.lng);
-  const y = Math.sin(λ2 - λ1) * Math.cos(φ2);
-  const x = Math.cos(φ1) * Math.sin(φ2) -
-            Math.sin(φ1) * Math.cos(φ2) * Math.cos(λ2 - λ1);
-  const θ = Math.atan2(y, x);
-  return (toDeg(θ) + 360) % 360;
 }
 
 // yaklaşık mesafe (km) – animasyon süresi için
@@ -127,15 +105,15 @@ export default function AnimatedFlight({ flight, speedKmh = 450, loop = true }: 
     <>
       {/* kesikli rota */}
       <Polyline
-        positions={[toLatLng(start.lat, start.lng), toLatLng(end.lat, end.lng)]}
+        positions={[toLL(start.lat, start.lng), toLL(end.lat, end.lng)]}
         pathOptions={{ dashArray: "6 8", weight: 2 }}
       />
       {/* başlangıç ve varış noktaları */}
-      <CircleMarker center={toLatLng(start.lat, start.lng)} radius={6} pathOptions={{ color: "green" }} />
-      <CircleMarker center={toLatLng(end.lat, end.lng)} radius={6} pathOptions={{ color: "red" }} />
+      <CircleMarker center={toLL(start.lat, start.lng)} radius={6} pathOptions={{ color: "green" }} />
+      <CircleMarker center={toLL(end.lat, end.lng)} radius={6} pathOptions={{ color: "red" }} />
 
       {/* hareket eden uçak */}
-      <Marker position={toLatLng(pos.lat, pos.lng)} icon={planeIcon}>
+      <Marker position={toLL(pos.lat, pos.lng)} icon={planeIcon}>
         <Popup>
           <b>{flight.flightCode}</b><br />
           Başlangıç: {start.lat.toFixed(4)}, {start.lng.toFixed(4)}<br />
