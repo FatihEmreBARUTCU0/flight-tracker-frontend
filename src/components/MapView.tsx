@@ -24,10 +24,10 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
   const [flights, setFlights] = useState<Flight[]>([]);
   const [pos, setPos] = useState<Record<string, { lat: number; lng: number; ts: number }>>({});
   const [prevPos, setPrevPos] = useState<Record<string, { lat: number; lng: number }>>({});
-  // replay konumu + yön
+
   const [replayPos, setReplayPos] = useState<Record<string, { lat: number; lng: number; ang: number }>>({});
 
-  // ikon cache (derece → icon)
+ 
   const iconCache = useRef<Map<number, L.DivIcon>>(new Map());
   const getIcon = useCallback((deg: number) => {
     const d = Math.round(deg);
@@ -44,7 +44,7 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
     return icon;
   }, []);
 
-  // 1) uçuşları çek
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -59,7 +59,7 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
     return () => { cancelled = true; };
   }, []);
 
-  // 2) Replay aralığı: TEK istekle /telemetry/window
+
   useEffect(() => {
     if (mode !== "replay" || flights.length === 0) {
       onRangeChange?.(null);
@@ -75,7 +75,7 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
         const r = await fetch(url, { signal: ctrl.signal });
         const j = await r.json().catch(() => ({} as any));
 
-        // Beklenen şema: { global: { min, max } }
+     
         const g = (j && typeof j === "object") ? (j as any).global : undefined;
         const minVal = g?.min ?? (j as any)?.min;
         const maxVal = g?.max ?? (j as any)?.max;
@@ -88,14 +88,14 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
           }
         }
       } catch {
-        /* sessizce geç */
+      
       }
     })();
 
     return () => ctrl.abort();
   }, [mode, flights, onRangeChange]);
 
-  // 3) WS (canlı telemetri + yeni uçuşlar)
+
   useEffect(() => {
     const onMessage = (ev: MessageEvent) => {
       try {
@@ -119,7 +119,7 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
           });
         }
       } catch {
-        /* ignore */
+       
       }
     };
 
@@ -127,7 +127,7 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
     return () => unsubscribe();
   }, []);
 
-  // 4) Replay: tek backend çağrısı ile prev/next toplu; client-side interpolasyon
+  
   useEffect(() => {
     if (mode !== "replay" || flights.length === 0) {
       setReplayPos({});
@@ -148,7 +148,7 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
           `${API_URL}/telemetry/nearest?flightIds=${encodeURIComponent(ids)}&at=${encodeURIComponent(atIso)}`,
           { signal: ctrl.signal }
         );
-        const map = await r.json(); // { [flightId]: { prev?: {lat,lng,ts}, next?: {lat,lng,ts} } }
+        const map = await r.json(); 
 
         const nextState: Record<string, { lat: number; lng: number; ang: number }> = {};
 
@@ -204,16 +204,16 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
         const start = { lat: f.departure_lat, lng: f.departure_long };
         const end = { lat: f.destination_lat, lng: f.destination_long };
 
-        const liveP = pos[f._id];              // canlıdan gelen son nokta
+        const liveP = pos[f._id];              
         const prevLiveP = prevPos[f._id] ?? start;
-        const replP = replayPos[f._id];        // replay sorgusundan gelen (lat,lng,ang)
+        const replP = replayPos[f._id];        
 
-        // gösterilecek nokta (lat,lng)
+      
         const pLive = liveP ? { lat: liveP.lat, lng: liveP.lng } : undefined;
         const pReplay = replP ? { lat: replP.lat, lng: replP.lng } : undefined;
         const p = mode === "replay" ? pReplay : pLive;
 
-        // yön (bearing)
+      
         let ang: number;
         if (mode === "replay") {
           ang = replP?.ang ?? bearing(start, end);

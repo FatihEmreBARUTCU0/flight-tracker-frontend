@@ -8,20 +8,20 @@ type Mode = "live" | "replay";
 export default function App() {
   const [mode, setMode] = useState<Mode>("live");
 
-  // --- Replay'de pencereyi sabitle: moda girince "şimdi"yi dondur
+  
   const [replayNow, setReplayNow] = useState<number | null>(null);
   useEffect(() => {
     if (mode === "replay") setReplayNow(Date.now());
     else setReplayNow(null);
   }, [mode]);
 
-  // MapView'dan gelecek dinamik pencere (ms cinsinden epoch)
+  
   const [range, setRange] = useState<{ min: number; max: number } | null>(null);
 
-  // Live'da gerçek şimdi, Replay'de sabitlenen an
+
   const nowBase = replayNow ?? Date.now();
 
-  // MapView pencere vermezse fallback: son 6 saat
+
   const minTs = useMemo(
     () => (range ? range.min : nowBase - 6 * 60 * 60 * 1000),
     [range, nowBase]
@@ -33,18 +33,18 @@ export default function App() {
 
   const [atTs, setAtTs] = useState<number>(maxTs);
 
-  // Replay'e geçildiğinde slider'ı bir KEZ sabit "şimdi"ye getir
+  
   useEffect(() => {
     if (mode === "replay") setAtTs(nowBase);
   }, [mode, nowBase]);
 
-  // Pencere değişirse seçili değer aralıkta kalsın
+ 
   useEffect(() => {
     if (mode !== "replay") return;
     setAtTs((prev) => Math.min(Math.max(prev, minTs), maxTs));
   }, [mode, minTs, maxTs]);
 
-  // ---- uçuş planlama formu (değişmedi) ----
+
   const [form, setForm] = useState({
     flightCode: "",
     departure_lat: 41.2753,

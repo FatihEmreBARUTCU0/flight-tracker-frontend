@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
 import 'leaflet/dist/leaflet.css'
-import './ws'                  // ⬅️ ws bağlantısı burada başlar
+import './ws'                 
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

@@ -3,12 +3,11 @@ const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:3000/ws";
 let socket: WebSocket | null = null;
 let retry = 0;
 
-// Global abonelik listesi
 const subscribers = new Set<(ev: MessageEvent) => void>();
 
 function notify(ev: MessageEvent) {
   for (const fn of subscribers) {
-    try { fn(ev); } catch { /* tek abonede hata diğerlerini etkilemesin */ }
+    try { fn(ev); } catch {  }
   }
 }
 
@@ -36,14 +35,14 @@ export function connect() {
   return socket;
 }
 
-/** Mesaj aboneliği — unsubscribe fonksiyonu döner */
+
 export function subscribe(handler: (ev: MessageEvent) => void) {
   subscribers.add(handler);
   return () => { subscribers.delete(handler); };
 }
 
-// Modül yüklendiğinde ilk bağlantıyı başlat
+
 connect();
 
-// (opsiyonel) debug amaçlı dışarı aç
+
 export function currentSocket() { return socket; }

@@ -1,4 +1,3 @@
-// frontend/src/lib/geo.ts
 import type { LatLngExpression } from "leaflet";
 export const toLL = (lat: number, lng: number) => [lat, lng] as LatLngExpression;
 export const lerp = (a: number, b: number, t: number) => a + (b - a) * t;

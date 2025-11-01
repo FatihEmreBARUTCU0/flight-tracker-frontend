@@ -1,4 +1,3 @@
-// frontend/src/components/AnimatedFlight.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Marker, Polyline, Popup, CircleMarker } from "react-leaflet";
 import L from "leaflet";
@@ -11,17 +10,17 @@ export type Flight = {
   departure_long: number;
   destination_lat: number;
   destination_long: number;
-  departureTime: string; // ISO
+  departureTime: string;
 };
 
 type Props = {
   flight: Flight;
-  // hız ve tekrar ayarları; denemede oynayabilirsin
-  speedKmh?: number;   // uçak hızı
-  loop?: boolean;      // bittiğinde başa dönsün mü
+ 
+  speedKmh?: number;   
+  loop?: boolean;     
 };
 
-// iki nokta arasında basit doğrusal interpolasyon
+
 function interpolate(
   a: { lat: number; lng: number },
   b: { lat: number; lng: number },
@@ -33,7 +32,7 @@ function interpolate(
   };
 }
 
-// yaklaşık mesafe (km) – animasyon süresi için
+
 function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
   const R = 6371;
   const toRad = (d: number) => (d * Math.PI) / 180;
@@ -49,14 +48,14 @@ function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: num
 export default function AnimatedFlight({ flight, speedKmh = 450, loop = true }: Props) {
   const start = { lat: flight.departure_lat, lng: flight.departure_long };
   const end = { lat: flight.destination_lat, lng: flight.destination_long };
-  const [t, setT] = useState(0); // 0..1 arası ilerleme
+  const [t, setT] = useState(0); 
   const rafRef = useRef<number | null>(null);
 
-  // mesafeye göre süre (ms)
+
   const durationMs = useMemo(() => {
     const distKm = haversineKm(start, end);
     const hours = distKm / speedKmh;
-    return Math.max(3000, hours * 3600 * 1000); // min 3 sn, izlenebilir olsun
+    return Math.max(3000, hours * 3600 * 1000); 
   }, [start.lat, start.lng, end.lat, end.lng, speedKmh]);
 
   useEffect(() => {
@@ -70,7 +69,7 @@ export default function AnimatedFlight({ flight, speedKmh = 450, loop = true }: 
       if (nt < 1) {
         rafRef.current = requestAnimationFrame(tick);
       } else if (loop) {
-        // başa sar
+        
         setTimeout(() => {
           if (!mounted) return;
           setT(0);
@@ -89,14 +88,14 @@ export default function AnimatedFlight({ flight, speedKmh = 450, loop = true }: 
   const pos = interpolate(start, end, t);
   const ang = bearing(start, end);
 
-  // ✈️ ikon – açıya göre döndür
+ 
   const planeIcon = useMemo(
     () =>
       L.divIcon({
         html: `<div style="font-size:22px; transform: rotate(${ang}deg); line-height:1">✈️</div>`,
         iconSize: [30, 30],
-        iconAnchor: [15, 15], // merkezden dursun
-        className: "plane-icon", // ekstra css istersen
+        iconAnchor: [15, 15], 
+        className: "plane-icon", 
       }),
     [ang]
   );
