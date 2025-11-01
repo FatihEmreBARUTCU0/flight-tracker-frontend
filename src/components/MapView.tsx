@@ -1,11 +1,10 @@
-// frontend/src/components/MapView.tsx
 import { useEffect, useState, useRef, useCallback, Fragment } from "react";
 import { MapContainer, TileLayer, Polyline, CircleMarker, Marker, Popup } from "react-leaflet";
 import L, { type LatLngExpression } from "leaflet";
-import ws from "../ws";
+
 import "leaflet/dist/leaflet.css";
 import { toLL, bearing } from "../lib/geo";
-
+import { subscribe } from "../ws";
 type Flight = {
   _id: string;
   flightCode: string;
@@ -60,68 +59,62 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
     return () => { cancelled = true; };
   }, []);
 
+  // 2) Replay aralığı: TEK istekle /telemetry/window
   useEffect(() => {
     if (mode !== "replay" || flights.length === 0) {
       onRangeChange?.(null);
       return;
     }
     const ctrl = new AbortController();
+
     (async () => {
       try {
+        const ids = flights.map((f) => f._id).join(",");
         const nowIso = new Date().toISOString();
-        const results = await Promise.all(
-          flights.map(async (f) => {
-            // ilk kayıt
-            const r1 = await fetch(
-              `${API_URL}/telemetry?flightId=${encodeURIComponent(f._id)}&limit=1&sort=asc`,
-              { signal: ctrl.signal }
-            );
-            const first = (await r1.json().catch(() => []))?.[0];
+        const url = `${API_URL}/telemetry/window?flightIds=${encodeURIComponent(ids)}&at=${encodeURIComponent(nowIso)}`;
+        const r = await fetch(url, { signal: ctrl.signal });
+        const j = await r.json().catch(() => ({} as any));
 
-            // son kayıt (şu ana kadar)
-            const r2 = await fetch(
-              `${API_URL}/telemetry/latest?flightId=${encodeURIComponent(f._id)}&at=${encodeURIComponent(nowIso)}`,
-              { signal: ctrl.signal }
-            );
-            const last = await r2.json().catch(() => undefined);
+        // Beklenen şema: { global: { min, max } }
+        const g = (j && typeof j === "object") ? (j as any).global : undefined;
+        const minVal = g?.min ?? (j as any)?.min;
+        const maxVal = g?.max ?? (j as any)?.max;
 
-            const t0 = first?.ts ? new Date(first.ts).getTime() : undefined;
-            const t1 = last?.ts ? new Date(last.ts).getTime() : undefined;
-            return [t0, t1] as const;
-          })
-        );
-
-        let min = Infinity, max = -Infinity;
-        for (const [t0, t1] of results) {
-          if (typeof t0 === "number") min = Math.min(min, t0);
-          if (typeof t1 === "number") max = Math.max(max, t1);
-        }
-        if (isFinite(min) && isFinite(max)) {
-          // küçük tampon ekle (±30 sn)
-          onRangeChange?.({ min: min - 30_000, max: max + 30_000 });
+        if (minVal && maxVal) {
+          const minMs = typeof minVal === "number" ? minVal : new Date(minVal).getTime();
+          const maxMs = typeof maxVal === "number" ? maxVal : new Date(maxVal).getTime();
+          if (Number.isFinite(minMs) && Number.isFinite(maxMs)) {
+            onRangeChange?.({ min: minMs - 30_000, max: maxMs + 30_000 }); // ±30 sn tampon
+          }
         }
       } catch {
-        // sessizce geç
+        /* sessizce geç */
       }
     })();
+
     return () => ctrl.abort();
   }, [mode, flights, onRangeChange]);
 
-  // 2) WS (canlı telemetri + yeni uçuşlar)
+  // 3) WS (canlı telemetri + yeni uçuşlar)
   useEffect(() => {
     const onMessage = (ev: MessageEvent) => {
       try {
-        const msg = JSON.parse(ev.data);
+        const msg = JSON.parse(ev.data as string);
 
         if (msg?.type === "flight.created" && msg.flight) {
-          setFlights((prev) => (prev.some((f) => f._id === msg.flight._id) ? prev : [...prev, msg.flight]));
+          setFlights((prev) =>
+            prev.some((f) => f._id === msg.flight._id) ? prev : [...prev, msg.flight]
+          );
         }
 
         if (msg?.type === "telemetry") {
           const { flightId, lat, lng, ts } = msg;
           setPos((prev) => {
             const last = prev[flightId];
-            setPrevPos((p) => ({ ...p, [flightId]: last ? { lat: last.lat, lng: last.lng } : { lat, lng } }));
+            setPrevPos((p) => ({
+              ...p,
+              [flightId]: last ? { lat: last.lat, lng: last.lng } : { lat, lng },
+            }));
             return { ...prev, [flightId]: { lat, lng, ts } };
           });
         }
@@ -130,105 +123,77 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
       }
     };
 
-    ws.addEventListener("message", onMessage);
-    return () => ws.removeEventListener("message", onMessage);
+    const unsubscribe = subscribe(onMessage);
+    return () => unsubscribe();
   }, []);
 
-  // 3) Replay: at zamanına karşılık gelen nokta (prev/next + interpolasyon) + yön
+  // 4) Replay: tek backend çağrısı ile prev/next toplu; client-side interpolasyon
   useEffect(() => {
     if (mode !== "replay" || flights.length === 0) {
       setReplayPos({});
       return;
     }
 
-    const debounceMs = 150;
     const ctrl = new AbortController();
-    const iso = new Date(at).toISOString();
-    const MAX_GAP_MS = 120_000; // 2 dk: bu süreden uzun aralarda interpolasyon yapma
-    const atMs = at;
+    const debounceMs = 450;
+    const atIso = new Date(at).toISOString();
+    const MAX_GAP_MS = 120_000;
 
     function lerp(a: number, b: number, t: number) { return a + (b - a) * t; }
 
-    async function getPointAt(f: Flight, signal: AbortSignal) {
+    const tmr = setTimeout(async () => {
       try {
-        // ≤ at olan son nokta
-        const r1 = await fetch(
-          `${API_URL}/telemetry/latest?flightId=${encodeURIComponent(f._id)}&at=${encodeURIComponent(iso)}`,
-          { signal }
+        const ids = flights.map(f => f._id).join(",");
+        const r = await fetch(
+          `${API_URL}/telemetry/nearest?flightIds=${encodeURIComponent(ids)}&at=${encodeURIComponent(atIso)}`,
+          { signal: ctrl.signal }
         );
-        const prev = await r1.json().catch(() => undefined);
+        const map = await r.json(); // { [flightId]: { prev?: {lat,lng,ts}, next?: {lat,lng,ts} } }
 
-        // ≥ at olan ilk nokta
-        const r2 = await fetch(
-          `${API_URL}/telemetry?flightId=${encodeURIComponent(f._id)}&from=${encodeURIComponent(iso)}&limit=1&sort=asc`,
-          { signal }
-        );
-        const list = await r2.json().catch(() => undefined);
-        const next = Array.isArray(list) ? list[0] : undefined;
+        const nextState: Record<string, { lat: number; lng: number; ang: number }> = {};
 
-        // iki uç da varsa
-        if (prev && next && prev.ts && next.ts) {
-          const t0 = new Date(prev.ts).getTime();
-          const t1 = new Date(next.ts).getTime();
-          const gap = t1 - t0;
-          // GAP büyükse: interpolasyon yapma, prev'de bekle
-          if (gap > MAX_GAP_MS) {
-            const angHold = bearing(
-              { lat: f.departure_lat, lng: f.departure_long },
-              { lat: prev.lat, lng: prev.lng }
-            );
-            return { lat: prev.lat, lng: prev.lng, ang: angHold };
+        for (const f of flights) {
+          const pair = map?.[f._id];
+          const start = { lat: f.departure_lat, lng: f.departure_long };
+
+          const prev = pair?.prev ? { ...pair.prev, t: new Date(pair.prev.ts).getTime() } : null;
+          const next = pair?.next ? { ...pair.next, t: new Date(pair.next.ts).getTime() } : null;
+
+          if (prev && next) {
+            const gap = next.t - prev.t;
+            if (gap > MAX_GAP_MS) {
+              const angHold = bearing(start, { lat: prev.lat, lng: prev.lng });
+              nextState[f._id] = { lat: prev.lat, lng: prev.lng, ang: angHold };
+            } else {
+              const span = Math.max(1, gap);
+              const t = Math.min(1, Math.max(0, (at - prev.t) / span));
+              const lat = lerp(prev.lat, next.lat, t);
+              const lng = lerp(prev.lng, next.lng, t);
+              const ang = bearing({ lat: prev.lat, lng: prev.lng }, { lat: next.lat, lng: next.lng });
+              nextState[f._id] = { lat, lng, ang };
+            }
+            continue;
           }
-          // GAP küçükse: lineer interpolasyon
-          const span = Math.max(1, gap);
-          const t = Math.min(1, Math.max(0, (atMs - t0) / span));
-          const lat = lerp(prev.lat, next.lat, t);
-          const lng = lerp(prev.lng, next.lng, t);
-          const ang = bearing({ lat: prev.lat, lng: prev.lng }, { lat: next.lat, lng: next.lng });
-          return { lat, lng, ang };
+
+          if (prev) {
+            const ang = bearing(start, { lat: prev.lat, lng: prev.lng });
+            nextState[f._id] = { lat: prev.lat, lng: prev.lng, ang };
+            continue;
+          }
+
+          if (next) {
+            const ang = bearing(start, { lat: next.lat, lng: next.lng });
+            nextState[f._id] = { lat: f.departure_lat, lng: f.departure_long, ang };
+          }
         }
 
-        // yalnızca PREV varsa: prev'de bekle
-        if (prev && typeof prev.lat === "number" && typeof prev.lng === "number") {
-          const ang = bearing(
-            { lat: f.departure_lat, lng: f.departure_long },
-            { lat: prev.lat, lng: prev.lng }
-          );
-          return { lat: prev.lat, lng: prev.lng, ang };
-        }
-        // yalnızca NEXT varsa: kalkış noktasında bekle (uçağı erken göstermeyelim)
-        if (next && typeof next.lat === "number" && typeof next.lng === "number") {
-          const ang = bearing(
-            { lat: f.departure_lat, lng: f.departure_long },
-            { lat: next.lat, lng: next.lng }
-          );
-          return { lat: f.departure_lat, lng: f.departure_long, ang };
-        }
+        setReplayPos(nextState);
       } catch (e: any) {
-        if (e?.name !== "AbortError") console.error("[/telemetry pointAt] error", e);
-      }
-      return undefined;
-    }
-
-    const t = setTimeout(async () => {
-      try {
-        const entries = await Promise.all(
-          flights.map(async (f) => [f._id, await getPointAt(f, ctrl.signal)] as const)
-        );
-        const map: Record<string, { lat: number; lng: number; ang: number }> = {};
-        for (const [id, p] of entries) {
-          if (p) map[id] = p;
-        }
-        setReplayPos(map);
-      } catch (e: any) {
-        if (e?.name !== "AbortError") console.error("[/telemetry nearest] error", e);
+        if (e?.name !== "AbortError") console.error("[/telemetry/nearest] error", e);
       }
     }, debounceMs);
 
-    return () => {
-      clearTimeout(t);
-      ctrl.abort();
-    };
+    return () => { clearTimeout(tmr); ctrl.abort(); };
   }, [mode, at, flights]);
 
   return (
