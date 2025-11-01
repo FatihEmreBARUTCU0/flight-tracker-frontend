@@ -1,13 +1,49 @@
-// Basit WS istemcisi (isteğe göre geliştirilebilir)
 const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:3000/ws";
 
-// HMR sırasında çoğul bağlantıyı önlemek için global singleton
-const g = globalThis as unknown as { __APP_WS__?: WebSocket };
+let socket: WebSocket | null = null;
+let retry = 0;
 
-if (!g.__APP_WS__ || g.__APP_WS__.readyState === WebSocket.CLOSED) {
-  g.__APP_WS__ = new WebSocket(WS_URL);
-  g.__APP_WS__.addEventListener("open", () => console.log("[ws] connected:", WS_URL));
-  g.__APP_WS__.addEventListener("close", () => console.log("[ws] closed"));
+// Global abonelik listesi
+const subscribers = new Set<(ev: MessageEvent) => void>();
+
+function notify(ev: MessageEvent) {
+  for (const fn of subscribers) {
+    try { fn(ev); } catch { /* tek abonede hata diğerlerini etkilemesin */ }
+  }
 }
 
-export default g.__APP_WS__!;
+function attach(ws: WebSocket) {
+  ws.addEventListener("message", notify);
+  ws.addEventListener("open", () => {
+    retry = 0;
+    console.log("[ws] connected:", WS_URL);
+  });
+  ws.addEventListener("close", () => {
+    console.log("[ws] closed");
+    const delay = Math.min(1000 * 2 ** retry + Math.random() * 200, 15000);
+    retry++;
+    setTimeout(connect, delay);
+  });
+  ws.addEventListener("error", () => {
+    try { ws.close(); } catch {}
+  });
+}
+
+export function connect() {
+  if (socket && socket.readyState !== WebSocket.CLOSED) return socket;
+  socket = new WebSocket(WS_URL);
+  attach(socket);
+  return socket;
+}
+
+/** Mesaj aboneliği — unsubscribe fonksiyonu döner */
+export function subscribe(handler: (ev: MessageEvent) => void) {
+  subscribers.add(handler);
+  return () => { subscribers.delete(handler); };
+}
+
+// Modül yüklendiğinde ilk bağlantıyı başlat
+connect();
+
+// (opsiyonel) debug amaçlı dışarı aç
+export function currentSocket() { return socket; }
