@@ -3,11 +3,19 @@ const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:3000/ws";
 let socket: WebSocket | null = null;
 let retry = 0;
 
+<<<<<<< HEAD
+=======
+// Global abonelik listesi
+>>>>>>> aa198c6aa2d288c6b0e95f151c0fa5872ce8e92f
 const subscribers = new Set<(ev: MessageEvent) => void>();
 
 function notify(ev: MessageEvent) {
   for (const fn of subscribers) {
+<<<<<<< HEAD
     try { fn(ev); } catch {  }
+=======
+    try { fn(ev); } catch { /* tek abonede hata diğerlerini etkilemesin */ }
+>>>>>>> aa198c6aa2d288c6b0e95f151c0fa5872ce8e92f
   }
 }
 
@@ -35,14 +43,25 @@ export function connect() {
   return socket;
 }
 
+<<<<<<< HEAD
 
+=======
+/** Mesaj aboneliği — unsubscribe fonksiyonu döner */
+>>>>>>> aa198c6aa2d288c6b0e95f151c0fa5872ce8e92f
 export function subscribe(handler: (ev: MessageEvent) => void) {
   subscribers.add(handler);
   return () => { subscribers.delete(handler); };
 }
 
+<<<<<<< HEAD
 
 connect();
 
 
+=======
+// Modül yüklendiğinde ilk bağlantıyı başlat
+connect();
+
+// (opsiyonel) debug amaçlı dışarı aç
+>>>>>>> aa198c6aa2d288c6b0e95f151c0fa5872ce8e92f
 export function currentSocket() { return socket; }

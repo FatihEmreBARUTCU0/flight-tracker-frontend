@@ -59,7 +59,6 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
     return () => { cancelled = true; };
   }, []);
 
-
   useEffect(() => {
     if (mode !== "replay" || flights.length === 0) {
       onRangeChange?.(null);
@@ -94,7 +93,6 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
 
     return () => ctrl.abort();
   }, [mode, flights, onRangeChange]);
-
 
   useEffect(() => {
     const onMessage = (ev: MessageEvent) => {
