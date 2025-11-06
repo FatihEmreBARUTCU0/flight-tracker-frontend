@@ -5,6 +5,7 @@ import L, { type LatLngExpression } from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { toLL, bearing } from "../lib/geo";
 import { subscribe } from "../ws";
+
 type Flight = {
   _id: string;
   flightCode: string;
@@ -24,10 +25,8 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
   const [flights, setFlights] = useState<Flight[]>([]);
   const [pos, setPos] = useState<Record<string, { lat: number; lng: number; ts: number }>>({});
   const [prevPos, setPrevPos] = useState<Record<string, { lat: number; lng: number }>>({});
-
   const [replayPos, setReplayPos] = useState<Record<string, { lat: number; lng: number; ang: number }>>({});
 
- 
   const iconCache = useRef<Map<number, L.DivIcon>>(new Map());
   const getIcon = useCallback((deg: number) => {
     const d = Math.round(deg);
@@ -43,7 +42,6 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
     }
     return icon;
   }, []);
-
 
   useEffect(() => {
     let cancelled = false;
@@ -74,7 +72,6 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
         const r = await fetch(url, { signal: ctrl.signal });
         const j = await r.json().catch(() => ({} as any));
 
-     
         const g = (j && typeof j === "object") ? (j as any).global : undefined;
         const minVal = g?.min ?? (j as any)?.min;
         const maxVal = g?.max ?? (j as any)?.max;
@@ -87,7 +84,7 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
           }
         }
       } catch {
-      
+        // ignore
       }
     })();
 
@@ -117,7 +114,7 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
           });
         }
       } catch {
-       
+        // ignore
       }
     };
 
@@ -125,7 +122,43 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
     return () => unsubscribe();
   }, []);
 
-  
+  // 🔧 LIVE moda girildiğinde en son konumu tohumla (sunucu/sekme yeniden başlatılsa bile ikon hemen görünür)
+  useEffect(() => {
+    if (mode !== "live" || flights.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const atIso = new Date().toISOString();
+        const pairs = await Promise.all(
+          flights.map(async (f) => {
+            try {
+              const r = await fetch(
+                `${API_URL}/telemetry/latest?flightId=${encodeURIComponent(f._id)}&at=${encodeURIComponent(atIso)}`
+              );
+              const t = await r.json();
+              return [f._id, t] as const;
+            } catch {
+              return [f._id, null] as const;
+            }
+          })
+        );
+        if (cancelled) return;
+        setPos((prev) => {
+          const nx = { ...prev };
+          for (const [id, t] of pairs) {
+            if (t && typeof t === "object" && Number.isFinite(new Date(t.ts).getTime())) {
+              nx[id] = { lat: t.lat, lng: t.lng, ts: new Date(t.ts).getTime() };
+            }
+          }
+          return nx;
+        });
+      } catch {
+        // ignore
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [mode, flights]);
+
   useEffect(() => {
     if (mode !== "replay" || flights.length === 0) {
       setReplayPos({});
@@ -146,7 +179,7 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
           `${API_URL}/telemetry/nearest?flightIds=${encodeURIComponent(ids)}&at=${encodeURIComponent(atIso)}`,
           { signal: ctrl.signal }
         );
-        const map = await r.json(); 
+        const map = await r.json();
 
         const nextState: Record<string, { lat: number; lng: number; ang: number }> = {};
 
@@ -202,16 +235,14 @@ export default function MapView({ mode, at, onRangeChange }: Props) {
         const start = { lat: f.departure_lat, lng: f.departure_long };
         const end = { lat: f.destination_lat, lng: f.destination_long };
 
-        const liveP = pos[f._id];              
+        const liveP = pos[f._id];
         const prevLiveP = prevPos[f._id] ?? start;
-        const replP = replayPos[f._id];        
+        const replP = replayPos[f._id];
 
-      
         const pLive = liveP ? { lat: liveP.lat, lng: liveP.lng } : undefined;
         const pReplay = replP ? { lat: replP.lat, lng: replP.lng } : undefined;
         const p = mode === "replay" ? pReplay : pLive;
 
-      
         let ang: number;
         if (mode === "replay") {
           ang = replP?.ang ?? bearing(start, end);
